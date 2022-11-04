@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Double-O/Limitd-Backend/middleware"
+
+	"github.com/go-redis/redis/v9"
+
 	"github.com/Double-O/Limitd-Backend/controller"
 	"github.com/Double-O/Limitd-Backend/initializers"
 
@@ -18,6 +22,7 @@ import (
 )
 
 var db *gorm.DB
+var redisClient *redis.Client
 var userService service.UserService
 
 func setUp() error {
@@ -36,6 +41,9 @@ func setUp() error {
 		return err
 	}
 
+	//initializing redis
+	redisClient = initializers.NewRedisClient()
+
 	// initializing user service
 	userService = service.NewUserService(db)
 	return nil
@@ -50,9 +58,13 @@ func main() {
 		panic("setup failed")
 	}
 
-	r.POST("/login", controller.HandleLogin())
+	authRouter := r.Group("/auth")
+	authRouter.POST("/login", controller.HandleLogin(userService, redisClient))
 
-	r.GET("/ping", func(c *gin.Context) {
+	v1Router := r.Group("/v1")
+	v1Router.Use(middleware.AuthMiddleware())
+
+	v1Router.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
 		})

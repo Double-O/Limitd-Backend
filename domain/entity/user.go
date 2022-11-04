@@ -19,7 +19,7 @@ func (User) TableName() string {
 	return "user"
 }
 
-func NewUser(req *request_entity.LoginRequest) *User {
+func NewUser(req *request_entity.HandleLoginRequest) *User {
 	user := User{
 		UUID:      uuid.New(),
 		FirstName: req.FirstName,
