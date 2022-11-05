@@ -171,7 +171,7 @@ func HandleRefresh(
 		}
 
 		// get the actual refresh token
-		refreshToken, customErr := utils.GetRefreshTOken(ctx)
+		refreshToken, customErr := utils.GetRefreshToken(ctx)
 		if customErr != nil {
 			ctx.JSON(http.StatusForbidden, gin.H{
 				"result": customErr,
@@ -207,7 +207,7 @@ func HandleRefresh(
 		// issue the new/existing user a refresh and jwt token
 		tokenDetails, customErr := utils.CreateToken(user.UUID)
 		if customErr != nil {
-			ctx.JSON(http.StatusUnauthorized, gin.H{
+			ctx.JSON(http.StatusForbidden, gin.H{
 				"result": customErr,
 			})
 			return
@@ -215,7 +215,7 @@ func HandleRefresh(
 
 		customErr = utils.SaveTokenInRedis(context.Background(), redisClient, user.UUID, tokenDetails)
 		if customErr != nil {
-			ctx.JSON(http.StatusUnauthorized, gin.H{
+			ctx.JSON(http.StatusForbidden, gin.H{
 				"result": customErr,
 			})
 			return
@@ -235,5 +235,33 @@ func HandleRefresh(
 			"result": handleLonginResponse,
 		})
 
+	}
+}
+
+// ReqBody  : None
+// RespBody : None
+// PathParam : None
+func HandleLogOut(redisClient *redis.Client) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		accessTokenUuidG, ok := ctx.Get(utils.ACCESS_TOKEN_UUID)
+		if !ok {
+			logger.LogMessage(zerolog.ErrorLevel, "main.main", "main", utils.AccessTokenUUIDNotFoundInCtxMsg)
+			customErr := custom_error.NewErrorFromMessage("AccessTokenUUIDNotFoundInCtxMsg", utils.AccessTokenUUIDNotFoundInCtxMsg)
+			ctx.JSON(http.StatusOK, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+		accessTokenUUID := accessTokenUuidG.(string)
+
+		customErr := utils.DeleteToken(ctx, accessTokenUUID, redisClient)
+		if customErr != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		ctx.Status(http.StatusNoContent)
 	}
 }

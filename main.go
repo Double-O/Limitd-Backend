@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Double-O/Limitd-Backend/domain/entity"
+
 	"github.com/Double-O/Limitd-Backend/middleware"
+	"github.com/Double-O/Limitd-Backend/utils"
 
 	"github.com/go-redis/redis/v9"
 
@@ -31,6 +34,7 @@ func setUp() error {
 	//load env variable
 	godotenv.Load()
 
+	// TODO : Change this level
 	// set log level
 	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 
@@ -58,14 +62,33 @@ func main() {
 		panic("setup failed")
 	}
 
-	authRouter := r.Group("/auth")
-	authRouter.POST("/login", controller.HandleLogin(userService, redisClient))
-	authRouter.GET("/refresh", controller.HandleRefresh(userService, redisClient))
-	v1Router := r.Group("/v1")
-	v1Router.Use(middleware.AuthMiddleware(redisClient))
+	// login, refresh can be called by anyone, logout should be made by loggedin users
+	authPublicRouter := r.Group("/auth")
+	authPrivateRouter := r.Group("/auth")
 
-	v1Router.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+	authPrivateRouter.Use(middleware.AuthMiddleware(userService, redisClient))
+
+	authPublicRouter.POST("/login", controller.HandleLogin(userService, redisClient))
+	authPublicRouter.GET("/refresh", controller.HandleRefresh(userService, redisClient))
+
+	authPrivateRouter.POST("/logout", controller.HandleLogOut(redisClient))
+
+	v1Router := r.Group("/v1")
+	v1Router.Use(middleware.AuthMiddleware(userService, redisClient))
+
+	// TODO need to be removed
+	v1Router.GET("/ping", func(ctx *gin.Context) {
+		userG, ok := ctx.Get(utils.USER)
+		if !ok {
+			logger.LogMessage(zerolog.ErrorLevel, "main.main", "main", "user koi vai")
+			ctx.JSON(http.StatusOK, gin.H{
+				"message": "no pong",
+			})
+			return
+		}
+		user := userG.(*entity.User)
+		logger.LogMessage(zerolog.InfoLevel, "main.main", "main", fmt.Sprintf("user : %+v", user))
+		ctx.JSON(http.StatusOK, gin.H{
 			"message": "pong",
 		})
 	})

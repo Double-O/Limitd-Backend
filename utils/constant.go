@@ -16,4 +16,7 @@ const ACCESS_SECRET = "ACCESS_SECRET"
 const REFRESH_SECRET = "REFRESH_SECRET"
 
 const REFRESH_TOKEN = "Refresh_Token"
+const ACCESS_TOKEN_UUID = "Access_Token_UUID"
 const TOKEN_UUID = "token_uuid"
+
+const USER = "user"

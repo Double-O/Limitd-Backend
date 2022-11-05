@@ -97,7 +97,7 @@ func DeleteToken(ctx context.Context, givenUuid string, redisClient *redis.Clien
 	return nil
 }
 
-func VerifyToken(ctx *gin.Context, tokenString string, secret string, tokenType string) (*jwt.Token, *custom_error.Error) {
+func ParseToken(ctx *gin.Context, tokenString string, secret string, tokenType string) (*jwt.Token, *custom_error.Error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		//Make sure that the token method conform to "SigningMethodHMAC"
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -107,7 +107,7 @@ func VerifyToken(ctx *gin.Context, tokenString string, secret string, tokenType 
 	})
 	if err != nil {
 		errorMessage := fmt.Sprintf(FailedToParseTokenMsg, tokenType, err.Error())
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "VerifyToken", errorMessage)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "ParseToken", errorMessage)
 		return nil, custom_error.NewErrorFromMessage("FailedToParseTokenMsg", errorMessage)
 	}
 	return token, nil
@@ -126,7 +126,7 @@ func IsTokenValid(
 		return customErr
 	}
 
-	token, customErr := VerifyToken(ctx, tokenString, secret, tokenType)
+	token, customErr := ParseToken(ctx, tokenString, secret, tokenType)
 	if customErr != nil {
 		return customErr
 	}
@@ -193,8 +193,14 @@ func IsAccessTokenValid(ctx *gin.Context, redisClient *redis.Client) *custom_err
 	return IsTokenValid(ctx, redisClient, tokenString, ACCESS, secret)
 }
 
-func GetRefreshTOken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
+func GetRefreshToken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
 	refreshTokenString := ExtractRefreshTokenFromCookie(ctx)
 	secret := os.Getenv(REFRESH_SECRET)
-	return VerifyToken(ctx, refreshTokenString, secret, REFRESH)
+	return ParseToken(ctx, refreshTokenString, secret, REFRESH)
+}
+
+func GetAccessToken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
+	tokenString := ExtractAccessTokenFromRequest(ctx)
+	secret := os.Getenv(ACCESS_SECRET)
+	return ParseToken(ctx, tokenString, secret, ACCESS)
 }
