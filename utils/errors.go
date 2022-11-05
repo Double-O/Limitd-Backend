@@ -11,5 +11,6 @@ const UserAlreadyExistMsg = "User already Exists"
 // utils
 const AccessTokenGenerationFailedMsg = "Failed to generate access token, err : %+v"
 const RefreshTokenGenerationFailedMsg = "Failed to generate refresh token, err : %+v"
-const FailedToParseTokenMsg = "Failed to parse Access Token err : %+v"
-const InvalidTokenMsg = "Invalid Token"
+const FailedToParseAccessTokenMsg = "Failed to parse Access Token err : %+v"
+const InvalidAccessTokenMsg = "Invalid Token"
+const AccessTokenNotFoundMsg = "access token uuid not found"

@@ -62,7 +62,7 @@ func main() {
 	authRouter.POST("/login", controller.HandleLogin(userService, redisClient))
 
 	v1Router := r.Group("/v1")
-	v1Router.Use(middleware.AuthMiddleware())
+	v1Router.Use(middleware.AuthMiddleware(redisClient))
 
 	v1Router.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

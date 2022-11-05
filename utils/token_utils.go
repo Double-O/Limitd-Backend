@@ -106,22 +106,36 @@ func VerifyAccessToken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
 		return []byte(os.Getenv("ACCESS_SECRET")), nil
 	})
 	if err != nil {
-		errorMessage := fmt.Sprintf(FailedToParseTokenMsg, err.Error())
+		errorMessage := fmt.Sprintf(FailedToParseAccessTokenMsg, err.Error())
 		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "VerifyAccessToken", errorMessage)
-		return nil, custom_error.NewErrorFromMessage("FailedToParseTokenMsg", errorMessage)
+		return nil, custom_error.NewErrorFromMessage("FailedToParseAccessTokenMsg", errorMessage)
 	}
 	return token, nil
 }
 
-func IsTokenValid(ctx *gin.Context) *custom_error.Error {
+func IsTokenValid(ctx *gin.Context, client *redis.Client) *custom_error.Error {
 	token, customErr := VerifyAccessToken(ctx)
 	if customErr != nil {
 		return customErr
 	}
 	if !token.Valid {
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidTokenMsg)
-		customErr := custom_error.NewErrorFromMessage("InvalidTokenMsg", InvalidTokenMsg)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidAccessTokenMsg)
+		customErr := custom_error.NewErrorFromMessage("InvalidAccessTokenMsg", InvalidAccessTokenMsg)
 		return customErr
 	}
+	atClaims := token.Claims.(jwt.MapClaims)
+
+	result, err := client.Get(ctx, atClaims["access_uuid"].(string)).Result()
+	if err != nil {
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", AccessTokenNotFoundMsg)
+		customErr := custom_error.NewErrorFromMessage("AccessTokenNotFoundMsg", AccessTokenNotFoundMsg)
+		return customErr
+	}
+	if result != atClaims["uuid"] {
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidAccessTokenMsg)
+		customErr := custom_error.NewErrorFromMessage("InvalidAccessTokenMsg", InvalidAccessTokenMsg)
+		return customErr
+	}
+
 	return nil
 }
