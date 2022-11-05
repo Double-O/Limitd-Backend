@@ -19,6 +19,7 @@ import (
 type UserService interface {
 	CreateUser(req *request_entity.HandleLoginRequest) (*entity.User, *custom_error.Error)
 	FindUserByEmail(email string) (*entity.User, *custom_error.Error)
+	FindUserByUUID(uuid string) (*entity.User, *custom_error.Error)
 }
 
 type userServiceImpl struct {
@@ -51,7 +52,19 @@ func (userService *userServiceImpl) FindUserByEmail(email string) (*entity.User,
 	if result.Error != nil {
 		errorMessage := fmt.Sprintf(utils.FindUserByEmailErrorMsg, result.Error)
 		customErr := custom_error.NewErrorFromMessage("FindUserByEmailErrorMsg", errorMessage)
-		logger.LogMessage(zerolog.ErrorLevel, "service.user_service", "CreateUser", errorMessage)
+		logger.LogMessage(zerolog.ErrorLevel, "service.user_service", "FindUserByEmail", errorMessage)
+		return nil, customErr
+	}
+	return &user, nil
+}
+
+func (userService *userServiceImpl) FindUserByUUID(uuid string) (*entity.User, *custom_error.Error) {
+	var user entity.User
+	result := userService.db.Where("uuid = ?", uuid).First(&user)
+	if result.Error != nil {
+		errorMessage := fmt.Sprintf(utils.FindUserByUuidErrorMsg, result.Error)
+		customErr := custom_error.NewErrorFromMessage("FindUserByUuidErrorMsg", errorMessage)
+		logger.LogMessage(zerolog.ErrorLevel, "service.user_service", "FindUserByUUID", errorMessage)
 		return nil, customErr
 	}
 	return &user, nil

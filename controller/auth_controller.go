@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/Double-O/Limitd-Backend/domain/response_entity"
+	"github.com/dgrijalva/jwt-go"
 
 	"github.com/go-redis/redis/v9"
 
@@ -26,6 +27,9 @@ import (
 
 // we will assume no registration should be needed from user's perspective
 // he will just simply login
+// ReqBody  : request_entity.HandleLoginRequest
+// RespBody : response_entity.HandleLoginResponse
+// PathParam : None
 func HandleLogin(
 	userService service.UserService,
 	redisClient *redis.Client) gin.HandlerFunc {
@@ -107,7 +111,7 @@ func HandleLogin(
 		// setting refresh token in the cookie
 		// TODO: depending on env, we can use a secured cookie
 		cookieDomain := os.Getenv("SHARED_COOKIE_DOMAIN")
-		ctx.SetCookie("Refresh_Token", tokenDetails.RefreshToken, utils.RT_EXPIRATION_TIME_COOKIE_SECOND, "/", cookieDomain, false, true)
+		ctx.SetCookie(utils.REFRESH_TOKEN, tokenDetails.RefreshToken, utils.RT_EXPIRATION_TIME_COOKIE_SECOND, "/", cookieDomain, false, true)
 
 		ctx.JSON(http.StatusCreated, gin.H{
 			"result": handleLonginResponse,
@@ -120,24 +124,116 @@ func validateGoogleClaim(claims map[string]interface{}, loginInput request_entit
 
 	misMatchedField := ""
 	misMatch := false
+	misMatchValueInput := ""
+	misMatchValueClaims := ""
 
 	if claims["email"] != loginInput.Email {
 		misMatch = true
 		misMatchedField = "email"
+		misMatchValueInput = loginInput.Email
+		misMatchValueClaims = claims["email"].(string)
 	} else if claims["given_name"] != loginInput.FirstName {
 		misMatch = true
 		misMatchedField = "first_name"
+		misMatchValueInput = loginInput.FirstName
+		misMatchValueClaims = claims["given_name"].(string)
 	} else if claims["family_name"] != loginInput.LastName {
 		misMatch = true
 		misMatchedField = "last_name"
+		misMatchValueInput = loginInput.LastName
+		misMatchValueClaims = claims["family_name"].(string)
 	}
 
 	if misMatch {
-		errorMessage := fmt.Sprintf(utils.MismatchTokenAndLoginReqMsg, misMatchedField, claims, loginInput)
+		errorMessage := fmt.Sprintf(utils.MismatchTokenAndLoginReqMsg, misMatchedField, misMatchValueClaims, misMatchValueInput)
 		customErr := custom_error.NewErrorFromMessage("MismatchTokenAndLoginReqMsg", errorMessage)
 		logger.LogMessage(zerolog.ErrorLevel, "controller.auth_controller", "validateClaim", errorMessage)
 		return false, customErr
 	}
 
 	return true, nil
+}
+
+// ReqBody  : None
+// RespBody : response_entity.HandleLoginResponse
+// PathParam : None
+func HandleRefresh(
+	userService service.UserService,
+	redisClient *redis.Client) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		//check refresh token validity
+		customErr := utils.IsRefreshTokenValid(ctx, redisClient)
+		if customErr != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		// get the actual refresh token
+		refreshToken, customErr := utils.GetRefreshTOken(ctx)
+		if customErr != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		// get the claims(including token_uuid, user uuid)
+		refreshTokenClaims := refreshToken.Claims.(jwt.MapClaims)
+		refreshUuid := refreshTokenClaims[utils.TOKEN_UUID].(string)
+		userUuid := refreshTokenClaims["uuid"].(string)
+
+		//delete the refresh token from redis
+		customErr = utils.DeleteToken(ctx, refreshUuid, redisClient)
+		if customErr != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		user, customErr := userService.FindUserByUUID(userUuid)
+		if customErr != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		// TODO: Next part is also used in login request, should be in a separate function
+		// to prevent copy of same logic
+
+		// issue the new/existing user a refresh and jwt token
+		tokenDetails, customErr := utils.CreateToken(user.UUID)
+		if customErr != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		customErr = utils.SaveTokenInRedis(context.Background(), redisClient, user.UUID, tokenDetails)
+		if customErr != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"result": customErr,
+			})
+			return
+		}
+
+		handleLonginResponse := response_entity.HandleLoginResponse{
+			User:        response_entity.ConvertUserToUserResponse(user),
+			AccessToken: tokenDetails.AccessToken,
+		}
+
+		// setting refresh token in the cookie
+		// TODO: depending on env, we can use a secured cookie
+		cookieDomain := os.Getenv("SHARED_COOKIE_DOMAIN")
+		ctx.SetCookie(utils.REFRESH_TOKEN, tokenDetails.RefreshToken, utils.RT_EXPIRATION_TIME_COOKIE_SECOND, "/", cookieDomain, false, true)
+
+		ctx.JSON(http.StatusCreated, gin.H{
+			"result": handleLonginResponse,
+		})
+
+	}
 }

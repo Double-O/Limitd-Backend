@@ -60,7 +60,7 @@ func main() {
 
 	authRouter := r.Group("/auth")
 	authRouter.POST("/login", controller.HandleLogin(userService, redisClient))
-
+	authRouter.GET("/refresh", controller.HandleRefresh(userService, redisClient))
 	v1Router := r.Group("/v1")
 	v1Router.Use(middleware.AuthMiddleware(redisClient))
 

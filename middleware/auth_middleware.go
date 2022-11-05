@@ -10,15 +10,15 @@ import (
 )
 
 func AuthMiddleware(client *redis.Client) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		customErr := utils.IsTokenValid(c, client)
+	return func(ctx *gin.Context) {
+		customErr := utils.IsAccessTokenValid(ctx, client)
 		if customErr != nil {
-			c.JSON(http.StatusForbidden, gin.H{
+			ctx.JSON(http.StatusForbidden, gin.H{
 				"result": customErr,
 			})
-			c.Abort()
+			ctx.Abort()
 			return
 		}
-		c.Next()
+		ctx.Next()
 	}
 }

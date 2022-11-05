@@ -33,14 +33,14 @@ func CreateToken(userUUID uuid.UUID) (*entity.TokenDetails, *custom_error.Error)
 
 	var err error
 	// Creating Access Token
-	// ACESS_SECRET should be set from env
 	atClaims := jwt.MapClaims{}
+	atClaims["type"] = ACCESS
 	atClaims["authorized"] = true
-	atClaims["access_uuid"] = td.AccessUuid
+	atClaims[TOKEN_UUID] = td.AccessUuid
 	atClaims["uuid"] = userUUID
 	atClaims["exp"] = td.AtExpires
 	at := jwt.NewWithClaims(jwt.SigningMethodHS256, atClaims)
-	td.AccessToken, err = at.SignedString([]byte(os.Getenv("ACCESS_SECRET")))
+	td.AccessToken, err = at.SignedString([]byte(os.Getenv(ACCESS_SECRET)))
 
 	if err != nil {
 		errorMessage := fmt.Sprintf(AccessTokenGenerationFailedMsg, err.Error())
@@ -52,11 +52,12 @@ func CreateToken(userUUID uuid.UUID) (*entity.TokenDetails, *custom_error.Error)
 	// Creating Refresh Token
 	// Refresh secret should be set from env
 	rtClaims := jwt.MapClaims{}
-	rtClaims["refresh_uuid"] = td.RefreshUuid
+	rtClaims["type"] = REFRESH
+	rtClaims[TOKEN_UUID] = td.RefreshUuid
 	rtClaims["uuid"] = userUUID
 	rtClaims["exp"] = td.RtExpires
 	rt := jwt.NewWithClaims(jwt.SigningMethodHS256, rtClaims)
-	td.RefreshToken, err = rt.SignedString([]byte(os.Getenv("REFRESH_SECRET")))
+	td.RefreshToken, err = rt.SignedString([]byte(os.Getenv(REFRESH_SECRET)))
 	if err != nil {
 		errorMessage := fmt.Sprintf(RefreshTokenGenerationFailedMsg, err.Error())
 		customErr := custom_error.NewErrorFromMessage("RefreshTokenGenerationFailedMsg", errorMessage)
@@ -86,7 +87,82 @@ func SaveTokenInRedis(ctx context.Context, redisClient *redis.Client, userUUID u
 	return nil
 }
 
-func ExtractTokenFromRequest(ctx *gin.Context) string {
+func DeleteToken(ctx context.Context, givenUuid string, redisClient *redis.Client) *custom_error.Error {
+	_, err := redisClient.Del(ctx, givenUuid).Result()
+	if err != nil {
+		customErr := custom_error.NewErrorFromError("RedisTokenDeleteError", err)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "DeleteToken", customErr.Message)
+		return customErr
+	}
+	return nil
+}
+
+func VerifyToken(ctx *gin.Context, tokenString string, secret string, tokenType string) (*jwt.Token, *custom_error.Error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		//Make sure that the token method conform to "SigningMethodHMAC"
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	if err != nil {
+		errorMessage := fmt.Sprintf(FailedToParseTokenMsg, tokenType, err.Error())
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "VerifyToken", errorMessage)
+		return nil, custom_error.NewErrorFromMessage("FailedToParseTokenMsg", errorMessage)
+	}
+	return token, nil
+}
+
+func IsTokenValid(
+	ctx *gin.Context,
+	redisClient *redis.Client,
+	tokenString string,
+	tokenType string,
+	secret string) *custom_error.Error {
+
+	if tokenType != ACCESS && tokenType != REFRESH {
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidTypeOfTokenCallMsg)
+		customErr := custom_error.NewErrorFromMessage("InvalidTypeOfTokenCallMsg", InvalidTypeOfTokenCallMsg)
+		return customErr
+	}
+
+	token, customErr := VerifyToken(ctx, tokenString, secret, tokenType)
+	if customErr != nil {
+		return customErr
+	}
+	if !token.Valid {
+		errorMessage := fmt.Sprintf(InvalidTokenMsg, tokenType)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", errorMessage)
+		customErr := custom_error.NewErrorFromMessage("InvalidTokenMsg", errorMessage)
+		return customErr
+	}
+
+	tokenClaims := token.Claims.(jwt.MapClaims)
+	if tokenClaims["type"] != tokenType {
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidTypeOfTokenCallMsg)
+		customErr := custom_error.NewErrorFromMessage("InvalidTypeOfTokenCallMsg", InvalidTypeOfTokenCallMsg)
+		return customErr
+	}
+
+	result, err := redisClient.Get(ctx, tokenClaims[TOKEN_UUID].(string)).Result()
+	if err != nil {
+		errorMessage := fmt.Sprintf(TokenUUIDNotFoundMsg, tokenType)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", errorMessage)
+		customErr := custom_error.NewErrorFromMessage("TokenUUIDNotFoundMsg", errorMessage)
+		return customErr
+	}
+	if result != tokenClaims["uuid"] {
+		errorMessage := fmt.Sprintf(InvalidTokenMsg, tokenType)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", errorMessage)
+		customErr := custom_error.NewErrorFromMessage("InvalidTokenMsg", errorMessage)
+		return customErr
+	}
+
+	return nil
+
+}
+
+func ExtractAccessTokenFromRequest(ctx *gin.Context) string {
 	bearToken := ctx.GetHeader("Authorization")
 	//normally Authorization the_token_xxx
 	strArr := strings.Split(bearToken, " ")
@@ -96,46 +172,29 @@ func ExtractTokenFromRequest(ctx *gin.Context) string {
 	return ""
 }
 
-func VerifyAccessToken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
-	tokenString := ExtractTokenFromRequest(ctx)
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		//Make sure that the token method conform to "SigningMethodHMAC"
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(os.Getenv("ACCESS_SECRET")), nil
-	})
+func ExtractRefreshTokenFromCookie(ctx *gin.Context) string {
+	token, err := ctx.Cookie(REFRESH_TOKEN)
 	if err != nil {
-		errorMessage := fmt.Sprintf(FailedToParseAccessTokenMsg, err.Error())
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "VerifyAccessToken", errorMessage)
-		return nil, custom_error.NewErrorFromMessage("FailedToParseAccessTokenMsg", errorMessage)
+		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "ExtractRefreshTokenFromCookie", RefreshTokenNotFoundInCookieMsg)
+		return ""
 	}
-	return token, nil
+	return token
 }
 
-func IsTokenValid(ctx *gin.Context, client *redis.Client) *custom_error.Error {
-	token, customErr := VerifyAccessToken(ctx)
-	if customErr != nil {
-		return customErr
-	}
-	if !token.Valid {
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidAccessTokenMsg)
-		customErr := custom_error.NewErrorFromMessage("InvalidAccessTokenMsg", InvalidAccessTokenMsg)
-		return customErr
-	}
-	atClaims := token.Claims.(jwt.MapClaims)
+func IsRefreshTokenValid(ctx *gin.Context, redisClient *redis.Client) *custom_error.Error {
+	tokenString := ExtractRefreshTokenFromCookie(ctx)
+	secret := os.Getenv(REFRESH_SECRET)
+	return IsTokenValid(ctx, redisClient, tokenString, REFRESH, secret)
+}
 
-	result, err := client.Get(ctx, atClaims["access_uuid"].(string)).Result()
-	if err != nil {
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", AccessTokenNotFoundMsg)
-		customErr := custom_error.NewErrorFromMessage("AccessTokenNotFoundMsg", AccessTokenNotFoundMsg)
-		return customErr
-	}
-	if result != atClaims["uuid"] {
-		logger.LogMessage(zerolog.ErrorLevel, "utils.token_utils", "IsTokenValid", InvalidAccessTokenMsg)
-		customErr := custom_error.NewErrorFromMessage("InvalidAccessTokenMsg", InvalidAccessTokenMsg)
-		return customErr
-	}
+func IsAccessTokenValid(ctx *gin.Context, redisClient *redis.Client) *custom_error.Error {
+	tokenString := ExtractAccessTokenFromRequest(ctx)
+	secret := os.Getenv(ACCESS_SECRET)
+	return IsTokenValid(ctx, redisClient, tokenString, ACCESS, secret)
+}
 
-	return nil
+func GetRefreshTOken(ctx *gin.Context) (*jwt.Token, *custom_error.Error) {
+	refreshTokenString := ExtractRefreshTokenFromCookie(ctx)
+	secret := os.Getenv(REFRESH_SECRET)
+	return VerifyToken(ctx, refreshTokenString, secret, REFRESH)
 }
